@@ -91,8 +91,10 @@ Add a new helper module under `litellm/llms/github_copilot/` or an adjacent prox
 
 - imports `github-copilot-sdk`
 - creates a `CopilotClient`
+- calls `await client.start()` before `list_models()`
 - feature-detects `client.list_models()` and treats discovery as unavailable if the installed SDK does not expose it
 - calls `client.list_models()` when supported
+- calls `await client.stop()` in a `finally` block after each refresh attempt so the subprocess-backed client is not leaked
 - normalizes SDK model metadata into a LiteLLM-friendly structure
 
 The helper should return a structured result such as:
@@ -111,8 +113,8 @@ Normalized schema for the first pass:
   "provider": "github_copilot",
   "capabilities": {
     "supports_reasoning": bool,
-    "supported_reasoning_efforts": list[str],
   },
+  "supported_reasoning_efforts": list[str],
   "raw_sdk_metadata": dict | None,
 }
 ```
@@ -121,8 +123,11 @@ Rules:
 
 - `id` is always the raw SDK model identifier
 - `full_model_name` is always the proxy-facing form
+- `capabilities.supports_reasoning` maps from `ModelInfo.capabilities.supports.reasoning_effort`
+- `supported_reasoning_efforts` maps from top-level `ModelInfo.supported_reasoning_efforts`
 - missing SDK metadata is normalized to safe defaults instead of guessed values
 - the implementation must verify that the pinned SDK version used by LiteLLM exposes `list_models()`; if not, discovery remains unavailable until the dependency floor is raised
+- filter out models whose policy state is not usable; include a model only when `policy` is absent or `policy.state == "enabled"`
 
 This helper is read-only and separate from the request execution adapter, but it should reuse the same auth/runtime assumptions as the SDK chat path.
 
@@ -262,9 +267,9 @@ This preserves usability:
 
 1. Caller hits `/models` or `/v1/models`.
 2. Existing model-list path builds the user-visible available model set.
-3. Shared availability helper asks the Copilot discovery service for `github_copilot` models.
+3. If `enable_github_copilot_model_discovery_in_model_list` is enabled, shared availability helper asks the Copilot discovery service for `github_copilot` models.
 4. On success, normalized models are merged into the returned list.
-5. On controlled discovery unavailability, the proxy returns the normal list without fake Copilot entries.
+5. On controlled discovery unavailability, or when the rollout flag is disabled, the proxy returns the normal list without fake Copilot entries.
 
 ### Dashboard add-model flow
 
