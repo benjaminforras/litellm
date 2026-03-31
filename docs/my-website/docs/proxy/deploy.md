@@ -23,6 +23,8 @@ docker build \
 ```
 
 At runtime, pass `COPILOT_GITHUB_TOKEN` (or `GH_TOKEN` / `GITHUB_TOKEN`) into the container so the Copilot CLI can authenticate non-interactively.
+
+The source `Dockerfile` installs the Copilot CLI from the official `@github/copilot` npm package.
 :::
 
 ## Quick Start

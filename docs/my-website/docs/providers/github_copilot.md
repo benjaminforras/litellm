@@ -36,7 +36,7 @@ For the SDK-backed chat path, make sure the Copilot CLI runtime is installed and
 
 ### Docker / container usage
 
-If you want the SDK-backed `github_copilot/` chat path inside a container built from this repository, build the LiteLLM image with the Copilot CLI enabled:
+If you want the SDK-backed `github_copilot/` chat path inside a container built from this repository, build the LiteLLM image with the Copilot CLI enabled. The source `Dockerfile` installs the CLI from the official npm package, which is the most reliable path in Linux containers:
 
 ```bash showLineNumbers title="Build a Copilot-ready LiteLLM image"
 docker build \

@@ -87,7 +87,11 @@ RUN apk add --no-cache bash curl openssl tzdata nodejs npm python3 py3-pip libsn
 
 RUN if [ "$INSTALL_GITHUB_COPILOT_CLI" = "true" ]; then \
         echo "Installing GitHub Copilot CLI (${GITHUB_COPILOT_CLI_VERSION})"; \
-        curl -fsSL https://gh.io/copilot-install | VERSION="$GITHUB_COPILOT_CLI_VERSION" PREFIX="/usr/local" bash && \
+        COPILOT_PKG="@github/copilot"; \
+        if [ -n "$GITHUB_COPILOT_CLI_VERSION" ] && [ "$GITHUB_COPILOT_CLI_VERSION" != "latest" ]; then \
+            COPILOT_PKG="${COPILOT_PKG}@${GITHUB_COPILOT_CLI_VERSION#v}"; \
+        fi; \
+        npm_config_ignore_scripts=false npm install -g "$COPILOT_PKG" && \
         copilot --version; \
     else \
         echo "Skipping GitHub Copilot CLI installation"; \
