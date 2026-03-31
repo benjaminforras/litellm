@@ -228,9 +228,9 @@ Response shape:
       "display_name": "gpt-4o",
       "provider": "github_copilot",
       "capabilities": {
-        "supports_reasoning": true,
-        "supported_reasoning_efforts": ["low", "medium", "high"]
-      }
+        "supports_reasoning": true
+      },
+      "supported_reasoning_efforts": ["low", "medium", "high"]
     }
   ]
 }
@@ -336,6 +336,7 @@ Add tests covering:
 - selecting `Github Copilot` triggers backend provider-model fetch
 - successful dynamic response populates the dropdown
 - unavailable dynamic response falls back to static provider models
+- empty dynamic response shows the explicit empty-state path without static fallback
 - warning/error messaging is rendered without breaking the form
 
 ## Documentation
