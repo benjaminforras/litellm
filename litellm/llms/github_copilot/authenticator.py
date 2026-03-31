@@ -22,6 +22,7 @@ GITHUB_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_API_KEY_URL = "https://api.github.com/copilot_internal/v2/token"
+COPILOT_ENV_TOKEN_NAMES = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN")
 
 
 class Authenticator:
@@ -51,6 +52,10 @@ class Authenticator:
         Raises:
             GetAccessTokenError: If unable to obtain an access token after retries.
         """
+        env_access_token = self._get_env_access_token()
+        if env_access_token is not None:
+            return env_access_token
+
         try:
             with open(self.access_token_file, "r") as f:
                 access_token = f.read().strip()
@@ -145,7 +150,16 @@ class Authenticator:
                 endpoints = api_key_info.get("endpoints", {})
                 api_endpoint = endpoints.get("api")
                 return api_endpoint
-        except (IOError, json.JSONDecodeError, KeyError) as e:
+        except IOError as e:
+            if self._get_env_access_token() is not None:
+                verbose_logger.debug(
+                    "Skipping API endpoint file lookup while using env token auth: %s",
+                    str(e),
+                )
+                return None
+            verbose_logger.warning(f"Error reading API endpoint from file: {str(e)}")
+            return None
+        except (json.JSONDecodeError, KeyError) as e:
             verbose_logger.warning(f"Error reading API endpoint from file: {str(e)}")
             return None
 
@@ -193,6 +207,18 @@ class Authenticator:
         """Ensure the token directory exists."""
         if not os.path.exists(self.token_dir):
             os.makedirs(self.token_dir, exist_ok=True)
+
+    def _get_env_access_token(self) -> Optional[str]:
+        """
+        Return an explicit non-interactive GitHub token from environment variables.
+
+        These are used in-memory only and are not persisted to disk.
+        """
+        for env_var_name in COPILOT_ENV_TOKEN_NAMES:
+            token = os.getenv(env_var_name)
+            if token:
+                return token.strip()
+        return None
 
     def _get_github_headers(self, access_token: Optional[str] = None) -> Dict[str, str]:
         """

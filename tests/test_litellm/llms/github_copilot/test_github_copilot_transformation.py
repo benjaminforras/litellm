@@ -40,6 +40,7 @@ def test_github_copilot_config_get_openai_compatible_provider_info():
     mock_api_key = "gh.test-key-123456789"
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = mock_api_key
+    config.authenticator._get_env_access_token.return_value = None
     # Test with dynamic endpoint
     config.authenticator.get_api_base.return_value = "https://api.enterprise.githubcopilot.com"
 
@@ -89,6 +90,50 @@ def test_github_copilot_config_get_openai_compatible_provider_info():
         )
 
     assert "Failed to get API key" in str(excinfo.value)
+
+
+def test_github_copilot_config_defer_api_key_exchange_with_env_token():
+    """When an env token is configured, defer Copilot API-key exchange until request time."""
+
+    config = GithubCopilotConfig()
+    config.authenticator = MagicMock()
+    config.authenticator.get_api_base.return_value = None
+    config.authenticator._get_env_access_token.return_value = "ghp_env_token"
+
+    api_base, dynamic_api_key, custom_llm_provider = (
+        config._get_openai_compatible_provider_info(
+            model="github_copilot/gpt-4",
+            api_base=None,
+            api_key=None,
+            custom_llm_provider="github_copilot",
+        )
+    )
+
+    assert api_base == "https://api.githubcopilot.com"
+    assert dynamic_api_key is None
+    assert custom_llm_provider == "github_copilot"
+    config.authenticator.get_api_key.assert_not_called()
+
+
+def test_github_copilot_validate_environment_uses_copilot_api_key_for_auth_header():
+    """Copilot auth should override any placeholder/base Authorization header."""
+
+    config = GithubCopilotConfig()
+    config.authenticator = MagicMock()
+    config.authenticator.get_api_key.return_value = "gh.test-key-123"
+    config.authenticator.get_api_base.return_value = None
+
+    headers = config.validate_environment(
+        headers={},
+        model="github_copilot/gpt-4",
+        messages=[{"role": "user", "content": "Hello"}],
+        optional_params={},
+        litellm_params={},
+        api_key="proxy-key-should-not-leak",
+        api_base=None,
+    )
+
+    assert headers["Authorization"] == "Bearer gh.test-key-123"
 
 
 @patch("litellm.llms.github_copilot.authenticator.Authenticator.get_api_key")
@@ -180,7 +225,7 @@ def test_transform_messages_disable_copilot_system_to_assistant(monkeypatch):
 def test_x_initiator_header_user_request():
     """Test that user-only messages result in X-Initiator: user header"""
     config = GithubCopilotConfig()
-    
+
     # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
@@ -190,7 +235,7 @@ def test_x_initiator_header_user_request():
         {"role": "system", "content": "You are an assistant."},
         {"role": "user", "content": "Hello!"},
     ]
-    
+
     headers = config.validate_environment(
         headers={},
         model="github_copilot/gpt-4",
@@ -207,7 +252,7 @@ def test_x_initiator_header_user_request():
 def test_x_initiator_header_agent_request_with_assistant():
     """Test that messages with assistant role result in X-Initiator: agent header"""
     config = GithubCopilotConfig()
-    
+
     # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
@@ -217,10 +262,10 @@ def test_x_initiator_header_agent_request_with_assistant():
         {"role": "system", "content": "You are an assistant."},
         {"role": "assistant", "content": "I can help you."},
     ]
-    
+
     headers = config.validate_environment(
         headers={},
-        model="github_copilot/gpt-4", 
+        model="github_copilot/gpt-4",
         messages=messages,
         optional_params={},
         litellm_params={},
@@ -234,7 +279,7 @@ def test_x_initiator_header_agent_request_with_assistant():
 def test_x_initiator_header_agent_request_with_tool():
     """Test that messages with tool role result in X-Initiator: agent header"""
     config = GithubCopilotConfig()
-    
+
     # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
@@ -244,10 +289,10 @@ def test_x_initiator_header_agent_request_with_tool():
         {"role": "system", "content": "You are an assistant."},
         {"role": "tool", "content": "Tool response.", "tool_call_id": "123"},
     ]
-    
+
     headers = config.validate_environment(
         headers={},
-        model="github_copilot/gpt-4", 
+        model="github_copilot/gpt-4",
         messages=messages,
         optional_params={},
         litellm_params={},
@@ -261,8 +306,8 @@ def test_x_initiator_header_agent_request_with_tool():
 def test_x_initiator_header_mixed_messages_with_agent_roles():
     """Test that mixed messages with agent roles (assistant/tool) result in X-Initiator: agent header"""
     config = GithubCopilotConfig()
-    
-    # Mock the authenticator  
+
+    # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
     config.authenticator.get_api_base.return_value = None
@@ -272,11 +317,11 @@ def test_x_initiator_header_mixed_messages_with_agent_roles():
         {"role": "assistant", "content": "Previous response."},
         {"role": "user", "content": "Follow up question."},
     ]
-    
+
     headers = config.validate_environment(
         headers={},
         model="github_copilot/gpt-4",
-        messages=messages, 
+        messages=messages,
         optional_params={},
         litellm_params={},
         api_key=None,
@@ -289,8 +334,8 @@ def test_x_initiator_header_mixed_messages_with_agent_roles():
 def test_x_initiator_header_user_only_messages():
     """Test that user + system only messages result in X-Initiator: user header"""
     config = GithubCopilotConfig()
-    
-    # Mock the authenticator  
+
+    # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
     config.authenticator.get_api_base.return_value = None
@@ -300,11 +345,11 @@ def test_x_initiator_header_user_only_messages():
         {"role": "user", "content": "Hello"},
         {"role": "user", "content": "Follow up question."},
     ]
-    
+
     headers = config.validate_environment(
         headers={},
         model="github_copilot/gpt-4",
-        messages=messages, 
+        messages=messages,
         optional_params={},
         litellm_params={},
         api_key=None,
@@ -317,14 +362,14 @@ def test_x_initiator_header_user_only_messages():
 def test_x_initiator_header_empty_messages():
     """Test that empty messages result in X-Initiator: user header"""
     config = GithubCopilotConfig()
-    
+
     # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
     config.authenticator.get_api_base.return_value = None
 
     messages = []
-    
+
     headers = config.validate_environment(
         headers={},
         model="github_copilot/gpt-4",
@@ -341,7 +386,7 @@ def test_x_initiator_header_empty_messages():
 def test_x_initiator_header_system_only_messages():
     """Test that system-only messages result in X-Initiator: user header"""
     config = GithubCopilotConfig()
-    
+
     # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
@@ -350,7 +395,7 @@ def test_x_initiator_header_system_only_messages():
     messages = [
         {"role": "system", "content": "You are an assistant."},
     ]
-    
+
     headers = config.validate_environment(
         headers={},
         model="github_copilot/gpt-4",
@@ -418,7 +463,7 @@ def test_get_supported_openai_params_case_insensitive():
 def test_copilot_vision_request_header_with_image():
     """Test that Copilot-Vision-Request header is added when messages contain images"""
     config = GithubCopilotConfig()
-    
+
     # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
@@ -436,7 +481,7 @@ def test_copilot_vision_request_header_with_image():
             ]
         }
     ]
-    
+
     headers = config.validate_environment(
         headers={},
         model="github_copilot/gpt-4-vision-preview",
@@ -454,7 +499,7 @@ def test_copilot_vision_request_header_with_image():
 def test_copilot_vision_request_header_text_only():
     """Test that Copilot-Vision-Request header is not added for text-only messages"""
     config = GithubCopilotConfig()
-    
+
     # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
@@ -463,7 +508,7 @@ def test_copilot_vision_request_header_text_only():
     messages = [
         {"role": "user", "content": "Just a text message"},
     ]
-    
+
     headers = config.validate_environment(
         headers={},
         model="github_copilot/gpt-4",
@@ -481,7 +526,7 @@ def test_copilot_vision_request_header_text_only():
 def test_copilot_vision_request_header_with_type_image_url():
     """Test that Copilot-Vision-Request header is added for content with type: image_url"""
     config = GithubCopilotConfig()
-    
+
     # Mock the authenticator
     config.authenticator = MagicMock()
     config.authenticator.get_api_key.return_value = "gh.test-key-123"
@@ -496,7 +541,7 @@ def test_copilot_vision_request_header_with_type_image_url():
             ]
         }
     ]
-    
+
     headers = config.validate_environment(
         headers={},
         model="github_copilot/gpt-4-vision-preview",

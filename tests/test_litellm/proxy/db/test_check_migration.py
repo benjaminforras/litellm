@@ -1,24 +1,11 @@
-import json
 import os
 import sys
 
 import pytest
-from fastapi.testclient import TestClient
 
 sys.path.insert(
     0, os.path.abspath("../../../..")
 )  # Adds the parent directory to the system path
-
-
-import json
-import os
-import sys
-import time
-
-import pytest
-from fastapi.testclient import TestClient
-
-import litellm
 
 
 def test_check_migration_out_of_sync(mocker):
@@ -27,11 +14,9 @@ def test_check_migration_out_of_sync(mocker):
     - 🚨 [IMPORTANT] Does NOT Raise an Exception when the Prisma schema is out of sync with the database.
     - logs an error when the Prisma schema is out of sync with the database.
     """
-    # Mock the logger BEFORE importing the function
-    mock_logger = mocker.patch("litellm._logging.verbose_logger")
+    from litellm.proxy.db import check_migration
 
-    # Import the function after mocking the logger
-    from litellm.proxy.db.check_migration import check_prisma_schema_diff
+    mock_logger = mocker.patch.object(check_migration, "verbose_logger")
 
     # Mock the helper function to simulate out-of-sync state
     mock_diff_helper = mocker.patch(
@@ -41,7 +26,7 @@ def test_check_migration_out_of_sync(mocker):
 
     # Run the function - it should not raise an error
     try:
-        check_prisma_schema_diff(db_url="mock_url")
+        check_migration.check_prisma_schema_diff(db_url="mock_url")
     except Exception as e:
         pytest.fail(f"check_prisma_schema_diff raised an unexpected exception: {e}")
 

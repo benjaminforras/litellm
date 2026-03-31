@@ -5,6 +5,8 @@ Verifies that create_batch encodes response IDs with model info so that
 retrieve_batch can route back to the correct provider/credentials.
 """
 
+import sys
+from types import ModuleType
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +15,7 @@ import pytest
 import litellm
 from litellm.proxy.openai_files_endpoints.common_utils import (
     decode_model_from_file_id,
+    encode_file_id_with_model,
     get_original_file_id,
 )
 from litellm.types.utils import LiteLLMBatch
@@ -27,6 +30,18 @@ def _make_mock_request(headers: dict) -> MagicMock:
     mock_request.url.port = 4000
     mock_request.method = "POST"
     mock_request.url.path = "/v1/batches"
+    return mock_request
+
+
+def _make_retrieve_request(headers: dict) -> MagicMock:
+    """Create a mock FastAPI Request for retrieve_batch."""
+    mock_request = MagicMock()
+    mock_request.headers = headers
+    mock_request.query_params = {}
+    mock_request.url = MagicMock()
+    mock_request.url.port = 4000
+    mock_request.method = "GET"
+    mock_request.url.path = "/v1/batches/batch_abc123"
     return mock_request
 
 
@@ -51,6 +66,37 @@ def _make_batch_response(
     )
 
 
+def _patch_proxy_server_module(
+    *,
+    llm_router=None,
+    proxy_logging_obj=None,
+    prisma_client=None,
+):
+    """Patch the locally imported proxy_server module used inside endpoint functions."""
+    proxy_server_module = ModuleType("litellm.proxy.proxy_server")
+    proxy_server_module.general_settings = {}
+    proxy_server_module.llm_router = llm_router
+    proxy_server_module.proxy_config = MagicMock()
+    proxy_server_module.version = "1.0.0"
+    proxy_server_module.proxy_logging_obj = proxy_logging_obj or MagicMock(
+        post_call_success_hook=AsyncMock(),
+        update_request_status=AsyncMock(),
+        get_proxy_hook=MagicMock(return_value=MagicMock()),
+    )
+    proxy_server_module.prisma_client = prisma_client or MagicMock()
+    return patch.dict(sys.modules, {"litellm.proxy.proxy_server": proxy_server_module})
+
+
+def _make_user_api_key_dict() -> MagicMock:
+    """Create a stable auth object for endpoint tests."""
+    mock_user_api_key_dict = MagicMock()
+    mock_user_api_key_dict.parent_otel_span = None
+    mock_user_api_key_dict.user_id = "test_user"
+    mock_user_api_key_dict.team_metadata = None
+    mock_user_api_key_dict.allowed_model_region = ""
+    return mock_user_api_key_dict
+
+
 @pytest.mark.asyncio
 async def test_create_batch_with_x_litellm_model_encodes_batch_id():
     """
@@ -65,9 +111,7 @@ async def test_create_batch_with_x_litellm_model_encodes_batch_id():
     mock_response = _make_batch_response(batch_id=raw_batch_id)
     mock_request = _make_mock_request(headers={"x-litellm-model": model_name})
     mock_fastapi_response = MagicMock()
-    mock_user_api_key_dict = MagicMock()
-    mock_user_api_key_dict.parent_otel_span = None
-    mock_user_api_key_dict.user_id = "test_user"
+    mock_user_api_key_dict = _make_user_api_key_dict()
 
     mock_credentials = {
         "api_key": "sk-test",
@@ -79,7 +123,11 @@ async def test_create_batch_with_x_litellm_model_encodes_batch_id():
         patch(
             "litellm.proxy.batches_endpoints.endpoints._read_request_body",
             new=AsyncMock(
-                return_value={"input_file_id": "file-input456", "endpoint": "/v1/chat/completions", "completion_window": "24h"}
+                return_value={
+                    "input_file_id": "file-input456",
+                    "endpoint": "/v1/chat/completions",
+                    "completion_window": "24h",
+                }
             ),
         ),
         patch(
@@ -100,13 +148,9 @@ async def test_create_batch_with_x_litellm_model_encodes_batch_id():
             "litellm.proxy.batches_endpoints.endpoints.is_known_model",
             return_value=False,
         ),
-        patch("litellm.proxy.proxy_server.general_settings", {}),
-        patch("litellm.proxy.proxy_server.llm_router", MagicMock()),
-        patch("litellm.proxy.proxy_server.proxy_config", MagicMock()),
-        patch("litellm.proxy.proxy_server.version", "1.0.0"),
-        patch(
-            "litellm.proxy.proxy_server.proxy_logging_obj",
-            MagicMock(
+        _patch_proxy_server_module(
+            llm_router=MagicMock(),
+            proxy_logging_obj=MagicMock(
                 post_call_success_hook=AsyncMock(return_value=mock_response),
                 update_request_status=AsyncMock(),
             ),
@@ -116,7 +160,11 @@ async def test_create_batch_with_x_litellm_model_encodes_batch_id():
         mock_processor = MagicMock()
         mock_processor.common_processing_pre_call_logic = AsyncMock(
             return_value=(
-                {"input_file_id": "file-input456", "endpoint": "/v1/chat/completions", "completion_window": "24h"},
+                {
+                    "input_file_id": "file-input456",
+                    "endpoint": "/v1/chat/completions",
+                    "completion_window": "24h",
+                },
                 MagicMock(),
             )
         )
@@ -130,23 +178,24 @@ async def test_create_batch_with_x_litellm_model_encodes_batch_id():
         )
 
     # The batch_id should be encoded with model info
-    assert response.id != raw_batch_id, (
-        f"Expected batch_id to be encoded, but got raw ID: {response.id}"
-    )
-    assert response.id.startswith("batch_"), (
-        f"Encoded batch_id should keep batch_ prefix, got: {response.id}"
-    )
+    assert (
+        response.id != raw_batch_id
+    ), f"Expected batch_id to be encoded, but got raw ID: {response.id}"
+    assert response.id.startswith(
+        "batch_"
+    ), f"Encoded batch_id should keep batch_ prefix, got: {response.id}"
 
     # Should be decodable back to the original
     decoded_model = decode_model_from_file_id(response.id)
-    assert decoded_model == model_name, (
-        f"Expected model '{model_name}' from decoded batch_id, got: {decoded_model}"
-    )
+    assert (
+        decoded_model == model_name
+    ), f"Expected model '{model_name}' from decoded batch_id, got: {decoded_model}"
 
     original_id = get_original_file_id(response.id)
-    assert original_id == raw_batch_id, (
-        f"Expected original ID '{raw_batch_id}', got: {original_id}"
-    )
+    assert (
+        original_id == raw_batch_id
+    ), f"Expected original ID '{raw_batch_id}', got: {original_id}"
+    assert response._hidden_params["model_id"] == model_name
 
 
 @pytest.mark.asyncio
@@ -169,9 +218,7 @@ async def test_create_batch_with_x_litellm_model_encodes_output_and_error_file_i
     )
     mock_request = _make_mock_request(headers={"x-litellm-model": model_name})
     mock_fastapi_response = MagicMock()
-    mock_user_api_key_dict = MagicMock()
-    mock_user_api_key_dict.parent_otel_span = None
-    mock_user_api_key_dict.user_id = "test_user"
+    mock_user_api_key_dict = _make_user_api_key_dict()
 
     mock_credentials = {
         "api_key": "sk-test",
@@ -183,7 +230,11 @@ async def test_create_batch_with_x_litellm_model_encodes_output_and_error_file_i
         patch(
             "litellm.proxy.batches_endpoints.endpoints._read_request_body",
             new=AsyncMock(
-                return_value={"input_file_id": "file-input456", "endpoint": "/v1/chat/completions", "completion_window": "24h"}
+                return_value={
+                    "input_file_id": "file-input456",
+                    "endpoint": "/v1/chat/completions",
+                    "completion_window": "24h",
+                }
             ),
         ),
         patch(
@@ -204,13 +255,9 @@ async def test_create_batch_with_x_litellm_model_encodes_output_and_error_file_i
             "litellm.proxy.batches_endpoints.endpoints.is_known_model",
             return_value=False,
         ),
-        patch("litellm.proxy.proxy_server.general_settings", {}),
-        patch("litellm.proxy.proxy_server.llm_router", MagicMock()),
-        patch("litellm.proxy.proxy_server.proxy_config", MagicMock()),
-        patch("litellm.proxy.proxy_server.version", "1.0.0"),
-        patch(
-            "litellm.proxy.proxy_server.proxy_logging_obj",
-            MagicMock(
+        _patch_proxy_server_module(
+            llm_router=MagicMock(),
+            proxy_logging_obj=MagicMock(
                 post_call_success_hook=AsyncMock(return_value=mock_response),
                 update_request_status=AsyncMock(),
             ),
@@ -219,7 +266,11 @@ async def test_create_batch_with_x_litellm_model_encodes_output_and_error_file_i
         mock_processor = MagicMock()
         mock_processor.common_processing_pre_call_logic = AsyncMock(
             return_value=(
-                {"input_file_id": "file-input456", "endpoint": "/v1/chat/completions", "completion_window": "24h"},
+                {
+                    "input_file_id": "file-input456",
+                    "endpoint": "/v1/chat/completions",
+                    "completion_window": "24h",
+                },
                 MagicMock(),
             )
         )
@@ -239,6 +290,94 @@ async def test_create_batch_with_x_litellm_model_encodes_output_and_error_file_i
     # error_file_id should be encoded
     assert decode_model_from_file_id(response.error_file_id) == model_name
     assert get_original_file_id(response.error_file_id) == raw_error_file
+    assert response._hidden_params["model_id"] == model_name
+
+
+@pytest.mark.asyncio
+async def test_create_batch_with_model_encoded_input_file_sets_hidden_model_id():
+    """
+    When the input file ID is already encoded with model info, create_batch must
+    keep the original input file ID and expose model_id in hidden params so
+    downstream managed-files hooks can register output IDs correctly.
+    """
+    from litellm.proxy.batches_endpoints.endpoints import create_batch
+
+    model_name = "my-vllm-model"
+    encoded_input_file_id = encode_file_id_with_model(
+        file_id="file-input456", model=model_name
+    )
+    raw_batch_id = "batch_abc123"
+
+    mock_response = _make_batch_response(batch_id=raw_batch_id)
+    mock_request = _make_mock_request(headers={})
+    mock_fastapi_response = MagicMock()
+    mock_user_api_key_dict = _make_user_api_key_dict()
+
+    mock_credentials = {
+        "api_key": "sk-test",
+        "api_base": "http://vllm:8000",
+        "custom_llm_provider": "openai",
+    }
+
+    with (
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints._read_request_body",
+            new=AsyncMock(
+                return_value={
+                    "input_file_id": encoded_input_file_id,
+                    "endpoint": "/v1/chat/completions",
+                    "completion_window": "24h",
+                }
+            ),
+        ),
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.ProxyBaseLLMRequestProcessing"
+        ) as mock_processor_cls,
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.get_credentials_for_model",
+            return_value=mock_credentials,
+        ),
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.prepare_data_with_credentials",
+        ),
+        patch(
+            "litellm.acreate_batch",
+            new=AsyncMock(return_value=mock_response),
+        ),
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.is_known_model",
+            return_value=False,
+        ),
+        _patch_proxy_server_module(
+            llm_router=MagicMock(),
+            proxy_logging_obj=MagicMock(
+                post_call_success_hook=AsyncMock(return_value=mock_response),
+                update_request_status=AsyncMock(),
+            ),
+        ),
+    ):
+        mock_processor = MagicMock()
+        mock_processor.common_processing_pre_call_logic = AsyncMock(
+            return_value=(
+                {
+                    "input_file_id": encoded_input_file_id,
+                    "endpoint": "/v1/chat/completions",
+                    "completion_window": "24h",
+                },
+                MagicMock(),
+            )
+        )
+        mock_processor_cls.return_value = mock_processor
+
+        response = await create_batch(
+            request=mock_request,
+            fastapi_response=mock_fastapi_response,
+            provider=None,
+            user_api_key_dict=mock_user_api_key_dict,
+        )
+
+    assert response.input_file_id == encoded_input_file_id
+    assert response._hidden_params["model_id"] == model_name
 
 
 @pytest.mark.asyncio
@@ -253,15 +392,17 @@ async def test_create_batch_without_x_litellm_model_returns_raw_ids():
     mock_response = _make_batch_response(batch_id=raw_batch_id)
     mock_request = _make_mock_request(headers={})
     mock_fastapi_response = MagicMock()
-    mock_user_api_key_dict = MagicMock()
-    mock_user_api_key_dict.parent_otel_span = None
-    mock_user_api_key_dict.user_id = "test_user"
+    mock_user_api_key_dict = _make_user_api_key_dict()
 
     with (
         patch(
             "litellm.proxy.batches_endpoints.endpoints._read_request_body",
             new=AsyncMock(
-                return_value={"input_file_id": "file-input456", "endpoint": "/v1/chat/completions", "completion_window": "24h"}
+                return_value={
+                    "input_file_id": "file-input456",
+                    "endpoint": "/v1/chat/completions",
+                    "completion_window": "24h",
+                }
             ),
         ),
         patch(
@@ -275,13 +416,9 @@ async def test_create_batch_without_x_litellm_model_returns_raw_ids():
             "litellm.proxy.batches_endpoints.endpoints.is_known_model",
             return_value=False,
         ),
-        patch("litellm.proxy.proxy_server.general_settings", {}),
-        patch("litellm.proxy.proxy_server.llm_router", None),
-        patch("litellm.proxy.proxy_server.proxy_config", MagicMock()),
-        patch("litellm.proxy.proxy_server.version", "1.0.0"),
-        patch(
-            "litellm.proxy.proxy_server.proxy_logging_obj",
-            MagicMock(
+        _patch_proxy_server_module(
+            llm_router=None,
+            proxy_logging_obj=MagicMock(
                 post_call_success_hook=AsyncMock(return_value=mock_response),
                 update_request_status=AsyncMock(),
             ),
@@ -290,7 +427,11 @@ async def test_create_batch_without_x_litellm_model_returns_raw_ids():
         mock_processor = MagicMock()
         mock_processor.common_processing_pre_call_logic = AsyncMock(
             return_value=(
-                {"input_file_id": "file-input456", "endpoint": "/v1/chat/completions", "completion_window": "24h"},
+                {
+                    "input_file_id": "file-input456",
+                    "endpoint": "/v1/chat/completions",
+                    "completion_window": "24h",
+                },
                 MagicMock(),
             )
         )
@@ -360,3 +501,84 @@ class TestBatchIdRoundTripWithRetrieve:
             assert encoded.startswith("batch_")
             assert decode_model_from_file_id(encoded) == model
             assert get_original_file_id(encoded) == raw_id
+
+
+@pytest.mark.asyncio
+async def test_retrieve_batch_with_encoded_batch_id_sets_hidden_model_id():
+    """
+    When retrieve_batch routes by an encoded batch ID, it must expose model_id
+    in hidden params so downstream hooks can translate provider file IDs.
+    """
+    from litellm.proxy.batches_endpoints.endpoints import retrieve_batch
+
+    model_name = "my-vllm-model"
+    encoded_batch_id = encode_file_id_with_model(
+        file_id="batch_abc123", model=model_name, id_type="batch"
+    )
+    raw_output_file = "file-output789"
+    raw_error_file = "file-error012"
+
+    mock_response = _make_batch_response(
+        batch_id="batch_abc123",
+        output_file_id=raw_output_file,
+        error_file_id=raw_error_file,
+        status="in_progress",
+    )
+    mock_request = _make_retrieve_request(headers={})
+    mock_fastapi_response = MagicMock()
+    mock_user_api_key_dict = _make_user_api_key_dict()
+
+    mock_credentials = {
+        "api_key": "sk-test",
+        "api_base": "http://vllm:8000",
+        "custom_llm_provider": "openai",
+    }
+
+    with (
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.ProxyBaseLLMRequestProcessing"
+        ) as mock_processor_cls,
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.get_batch_from_database",
+            new=AsyncMock(return_value=(None, None)),
+        ),
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.get_credentials_for_model",
+            return_value=mock_credentials,
+        ),
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.prepare_data_with_credentials",
+        ),
+        patch(
+            "litellm.aretrieve_batch",
+            new=AsyncMock(return_value=mock_response),
+        ),
+        patch(
+            "litellm.proxy.batches_endpoints.endpoints.update_batch_in_database",
+            new=AsyncMock(),
+        ),
+        _patch_proxy_server_module(
+            llm_router=MagicMock(),
+            prisma_client=MagicMock(),
+            proxy_logging_obj=MagicMock(
+                post_call_success_hook=AsyncMock(return_value=mock_response),
+                update_request_status=AsyncMock(),
+                get_proxy_hook=MagicMock(return_value=MagicMock()),
+            ),
+        ),
+    ):
+        mock_processor = MagicMock()
+        mock_processor.common_processing_pre_call_logic = AsyncMock(
+            return_value=({"batch_id": encoded_batch_id}, MagicMock())
+        )
+        mock_processor_cls.return_value = mock_processor
+
+        response = await retrieve_batch(
+            request=mock_request,
+            fastapi_response=mock_fastapi_response,
+            provider=None,
+            user_api_key_dict=mock_user_api_key_dict,
+            batch_id=encoded_batch_id,
+        )
+
+    assert response._hidden_params["model_id"] == model_name

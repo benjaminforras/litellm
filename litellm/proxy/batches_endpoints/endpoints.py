@@ -203,6 +203,9 @@ async def create_batch(  # noqa: PLR0915
                 )
 
             response.input_file_id = input_file_id
+            if getattr(response, "_hidden_params", None) is None:
+                response._hidden_params = {}
+            response._hidden_params["model_id"] = model_from_file_id
 
         elif (
             litellm.enable_loadbalancing_on_batch_endpoints is True
@@ -245,6 +248,7 @@ async def create_batch(  # noqa: PLR0915
             response = await llm_router.acreate_batch(**_create_batch_data)
             response.input_file_id = input_file_id
             response._hidden_params["unified_file_id"] = unified_file_id
+            response._hidden_params["model_id"] = model
         else:
             # Check if model specified via header/query/body param
             model_param = (
@@ -274,6 +278,7 @@ async def create_batch(  # noqa: PLR0915
                 )
 
                 encode_batch_response_ids(response, model=model_param)
+                response._hidden_params["model_id"] = model_param
 
                 verbose_proxy_logger.debug(f"Created batch using model: {model_param}")
             else:
@@ -482,6 +487,7 @@ async def retrieve_batch(  # noqa: PLR0915
             )
 
             encode_batch_response_ids(response, model=model_from_id)
+            response._hidden_params["model_id"] = model_from_id
 
             verbose_proxy_logger.debug(
                 f"Retrieved batch using model: {model_from_id}, original_id: {original_batch_id}"

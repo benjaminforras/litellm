@@ -11,6 +11,12 @@ https://docs.github.com/en/copilot
 
 :::
 
+:::note
+
+LiteLLM now includes an official `github-copilot-sdk` backed chat path for plain text `github_copilot/` chat completions. If the SDK or Copilot CLI runtime is unavailable, or the request uses features the SDK path does not yet map cleanly, LiteLLM falls back to the existing HTTP implementation.
+
+:::
+
 | Property | Details |
 |-------|-------|
 | Description | GitHub Copilot Chat API provides access to GitHub's AI-powered coding assistant. |
@@ -25,6 +31,34 @@ GitHub Copilot uses OAuth device flow for authentication. On first use, you'll b
 1. LiteLLM will display a device code and verification URL
 2. Visit the URL and enter the code to authenticate
 3. Your credentials will be stored locally for future use
+
+For the SDK-backed chat path, make sure the Copilot CLI runtime is installed and available on your `PATH`. LiteLLM uses the SDK for plain text chat requests and keeps the legacy path for embeddings and unsupported request shapes.
+
+### Docker / container usage
+
+If you want the SDK-backed `github_copilot/` chat path inside a container built from this repository, build the LiteLLM image with the Copilot CLI enabled. The source `Dockerfile` installs the CLI from the official npm package, which is the most reliable path in Linux containers:
+
+```bash showLineNumbers title="Build a Copilot-ready LiteLLM image"
+docker build \
+  --build-arg INSTALL_GITHUB_COPILOT_CLI=true \
+  --build-arg GITHUB_COPILOT_CLI_VERSION=latest \
+  -t litellm-github-copilot .
+```
+
+When you run the container, prefer token-based auth instead of device-flow login:
+
+```bash showLineNumbers title="Run LiteLLM with GitHub Copilot SDK inside Docker"
+docker run \
+  -v $(pwd)/litellm_config.yaml:/app/config.yaml \
+  -e COPILOT_GITHUB_TOKEN=github_pat_your_token \
+  -p 4000:4000 \
+  litellm-github-copilot \
+  --config /app/config.yaml
+```
+
+The Copilot CLI and SDK respect `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN`. For GitHub personal access tokens, make sure the token has the **Copilot Requests** permission enabled.
+
+LiteLLM's legacy GitHub Copilot fallback path now also checks `COPILOT_GITHUB_TOKEN` and `GH_TOKEN` before triggering interactive device-code authentication, which makes proxy and container deployments non-interactive by default.
 
 ## Usage - LiteLLM Python SDK
 
@@ -208,4 +242,3 @@ extra_headers = {
     "user-agent": "GithubCopilot/1.155.0"        # User agent
 }
 ```
-

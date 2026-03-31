@@ -31,6 +31,8 @@ class GithubCopilotConfig(OpenAIConfig):
         custom_llm_provider: str,
     ) -> Tuple[Optional[str], Optional[str], str]:
         dynamic_api_base = self.authenticator.get_api_base() or GITHUB_COPILOT_API_BASE
+        if self.authenticator._get_env_access_token() is not None:
+            return dynamic_api_base, api_key, custom_llm_provider
         try:
             dynamic_api_key = self.authenticator.get_api_key()
         except GetAPIKeyError as e:
@@ -87,6 +89,7 @@ class GithubCopilotConfig(OpenAIConfig):
             copilot_api_key = self.authenticator.get_api_key()
             copilot_headers = get_copilot_default_headers(copilot_api_key)
             validated_headers = {**copilot_headers, **validated_headers}
+            validated_headers["Authorization"] = copilot_headers["Authorization"]
         except GetAPIKeyError:
             pass  # Will be handled later in the request flow
 
