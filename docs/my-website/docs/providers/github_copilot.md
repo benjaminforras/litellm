@@ -11,6 +11,12 @@ https://docs.github.com/en/copilot
 
 :::
 
+:::note
+
+LiteLLM now includes an official `github-copilot-sdk` backed chat path for plain text `github_copilot/` chat completions. If the SDK or Copilot CLI runtime is unavailable, or the request uses features the SDK path does not yet map cleanly, LiteLLM falls back to the existing HTTP implementation.
+
+:::
+
 | Property | Details |
 |-------|-------|
 | Description | GitHub Copilot Chat API provides access to GitHub's AI-powered coding assistant. |
@@ -25,6 +31,8 @@ GitHub Copilot uses OAuth device flow for authentication. On first use, you'll b
 1. LiteLLM will display a device code and verification URL
 2. Visit the URL and enter the code to authenticate
 3. Your credentials will be stored locally for future use
+
+For the SDK-backed chat path, make sure the Copilot CLI runtime is installed and available on your `PATH`. LiteLLM uses the SDK for plain text chat requests and keeps the legacy path for embeddings and unsupported request shapes.
 
 ## Usage - LiteLLM Python SDK
 
@@ -208,4 +216,3 @@ extra_headers = {
     "user-agent": "GithubCopilot/1.155.0"        # User agent
 }
 ```
-

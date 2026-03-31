@@ -198,6 +198,12 @@ from .llms.custom_llm import CustomLLM, custom_chat_llm_router
 from .llms.databricks.embed.handler import DatabricksEmbeddingHandler
 from .llms.deprecated_providers import aleph_alpha, palm
 from .llms.gemini.common_utils import get_api_key_from_env
+from .llms.github_copilot.sdk_adapter import (
+    GithubCopilotSDKChatRequest,
+    GithubCopilotSDKFallbackError,
+    github_copilot_sdk_chat_completion,
+    should_use_github_copilot_sdk_chat,
+)
 from .llms.groq.chat.handler import GroqChatCompletion
 from .llms.heroku.chat.transformation import HerokuChatConfig
 from .llms.huggingface.embedding.handler import HuggingFaceEmbedding
@@ -1359,6 +1365,61 @@ def completion(  # type: ignore # noqa: PLR0915
             ]  # update the model to the actual value if an alias has been passed in
         model_response = ModelResponse()
         setattr(model_response, "usage", litellm.Usage())
+        if (
+            custom_llm_provider == "github_copilot"
+            or (
+                custom_llm_provider is None
+                and isinstance(model, str)
+                and model.startswith("github_copilot/")
+            )
+        ):
+            github_copilot_sdk_request = GithubCopilotSDKChatRequest(
+                model=model,
+                messages=messages,
+                acompletion=acompletion,
+                stream=bool(stream),
+                timeout=timeout,
+                api_key=api_key,
+                api_base=api_base,
+                base_url=base_url,
+                extra_headers=extra_headers,
+                functions=functions,
+                function_call=function_call,
+                temperature=temperature,
+                top_p=top_p,
+                n=n,
+                stream_options=stream_options,
+                stop=stop,
+                max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
+                modalities=modalities,
+                prediction=prediction,
+                audio=audio,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty,
+                logit_bias=logit_bias,
+                user=user,
+                response_format=response_format,
+                seed=seed,
+                tools=tools,
+                tool_choice=tool_choice,
+                parallel_tool_calls=parallel_tool_calls,
+                logprobs=logprobs,
+                top_logprobs=top_logprobs,
+                reasoning_effort=reasoning_effort,
+                thinking=thinking,
+                web_search_options=web_search_options,
+            )
+            if should_use_github_copilot_sdk_chat(github_copilot_sdk_request):
+                try:
+                    return github_copilot_sdk_chat_completion(
+                        github_copilot_sdk_request
+                    )
+                except GithubCopilotSDKFallbackError as e:
+                    verbose_logger.debug(
+                        "Falling back to legacy GitHub Copilot transport: %s",
+                        e,
+                    )
         if (
             kwargs.get("azure", False) is True
         ):  # don't remove flag check, to remain backwards compatible for repos like Codium
