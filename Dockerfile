@@ -3,6 +3,8 @@ ARG LITELLM_BUILD_IMAGE=cgr.dev/chainguard/wolfi-base
 
 # Runtime image
 ARG LITELLM_RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base
+ARG INSTALL_GITHUB_COPILOT_CLI=false
+ARG GITHUB_COPILOT_CLI_VERSION=latest
 
 # Builder stage
 FROM $LITELLM_BUILD_IMAGE AS builder
@@ -47,8 +49,11 @@ FROM $LITELLM_RUNTIME_IMAGE AS runtime
 # Ensure runtime stage runs as root
 USER root
 
+ARG INSTALL_GITHUB_COPILOT_CLI
+ARG GITHUB_COPILOT_CLI_VERSION
+
 # Install runtime dependencies (libsndfile needed for audio processing on ARM64)
-RUN apk add --no-cache bash openssl tzdata nodejs npm python3 py3-pip libsndfile && \
+RUN apk add --no-cache bash curl openssl tzdata nodejs npm python3 py3-pip libsndfile && \
     npm install -g npm@latest tar@7.5.11 glob@11.1.0 @isaacs/brace-expansion@5.0.1 minimatch@10.2.4 diff@8.0.3 && \
     # SECURITY FIX: npm bundles tar, glob, and brace-expansion at multiple nested
     # levels inside its dependency tree. `npm install -g <pkg>` only creates a
@@ -79,6 +84,14 @@ RUN apk add --no-cache bash openssl tzdata nodejs npm python3 py3-pip libsndfile
     # no longer visible to image scanners.  The globally installed npm@latest
     # at /usr/local/lib/node_modules/npm/ remains fully functional.
     { apk del --no-cache npm 2>/dev/null || true; }
+
+RUN if [ "$INSTALL_GITHUB_COPILOT_CLI" = "true" ]; then \
+        echo "Installing GitHub Copilot CLI (${GITHUB_COPILOT_CLI_VERSION})"; \
+        curl -fsSL https://gh.io/copilot-install | VERSION="$GITHUB_COPILOT_CLI_VERSION" PREFIX="/usr/local" bash && \
+        copilot --version; \
+    else \
+        echo "Skipping GitHub Copilot CLI installation"; \
+    fi
 
 WORKDIR /app
 # Copy the current directory contents into the container at /app

@@ -34,6 +34,30 @@ GitHub Copilot uses OAuth device flow for authentication. On first use, you'll b
 
 For the SDK-backed chat path, make sure the Copilot CLI runtime is installed and available on your `PATH`. LiteLLM uses the SDK for plain text chat requests and keeps the legacy path for embeddings and unsupported request shapes.
 
+### Docker / container usage
+
+If you want the SDK-backed `github_copilot/` chat path inside a container built from this repository, build the LiteLLM image with the Copilot CLI enabled:
+
+```bash showLineNumbers title="Build a Copilot-ready LiteLLM image"
+docker build \
+  --build-arg INSTALL_GITHUB_COPILOT_CLI=true \
+  --build-arg GITHUB_COPILOT_CLI_VERSION=latest \
+  -t litellm-github-copilot .
+```
+
+When you run the container, prefer token-based auth instead of device-flow login:
+
+```bash showLineNumbers title="Run LiteLLM with GitHub Copilot SDK inside Docker"
+docker run \
+  -v $(pwd)/litellm_config.yaml:/app/config.yaml \
+  -e COPILOT_GITHUB_TOKEN=github_pat_your_token \
+  -p 4000:4000 \
+  litellm-github-copilot \
+  --config /app/config.yaml
+```
+
+The Copilot CLI and SDK respect `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN`. For GitHub personal access tokens, make sure the token has the **Copilot Requests** permission enabled.
+
 ## Usage - LiteLLM Python SDK
 
 ### Chat Completion

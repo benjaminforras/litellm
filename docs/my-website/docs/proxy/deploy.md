@@ -12,6 +12,19 @@ You can find the Dockerfile to build litellm proxy [here](https://github.com/Ber
 
 > Note: Production requires at least 4 CPU cores and 8 GB RAM.
 
+:::note GitHub Copilot SDK in Docker
+If you are building LiteLLM from source and want the SDK-backed `github_copilot/` chat path inside the container, build the image with:
+
+```bash
+docker build \
+  --build-arg INSTALL_GITHUB_COPILOT_CLI=true \
+  --build-arg GITHUB_COPILOT_CLI_VERSION=latest \
+  -t litellm-github-copilot .
+```
+
+At runtime, pass `COPILOT_GITHUB_TOKEN` (or `GH_TOKEN` / `GITHUB_TOKEN`) into the container so the Copilot CLI can authenticate non-interactively.
+:::
+
 ## Quick Start
 
 :::info
