@@ -150,7 +150,16 @@ class Authenticator:
                 endpoints = api_key_info.get("endpoints", {})
                 api_endpoint = endpoints.get("api")
                 return api_endpoint
-        except (IOError, json.JSONDecodeError, KeyError) as e:
+        except IOError as e:
+            if self._get_env_access_token() is not None:
+                verbose_logger.debug(
+                    "Skipping API endpoint file lookup while using env token auth: %s",
+                    str(e),
+                )
+                return None
+            verbose_logger.warning(f"Error reading API endpoint from file: {str(e)}")
+            return None
+        except (json.JSONDecodeError, KeyError) as e:
             verbose_logger.warning(f"Error reading API endpoint from file: {str(e)}")
             return None
 
