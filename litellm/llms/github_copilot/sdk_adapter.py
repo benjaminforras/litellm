@@ -16,6 +16,7 @@ _GITHUB_TOKEN_PREFIXES: Tuple[str, ...] = (
 )
 _SDK_DISABLE_ENV_VAR = "LITELLM_DISABLE_GITHUB_COPILOT_SDK"
 _SUPPORTED_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
+_SUPPORTED_MESSAGE_ROLES = {"system", "user", "assistant", "tool"}
 _STREAM_SENTINEL = object()
 
 
@@ -117,6 +118,11 @@ def github_copilot_sdk_chat_completion(
 ):
     if request.acompletion:
         return _github_copilot_sdk_chat_completion_async(request)
+    if _has_running_loop():
+        raise GithubCopilotSDKFallbackError(
+            "github-copilot-sdk sync completion cannot be used from within an "
+            "existing event loop"
+        )
     return asyncio.run(_github_copilot_sdk_chat_completion_async(request))
 
 
@@ -159,11 +165,11 @@ async def _github_copilot_sdk_chat_completion_async(
         )
 
     try:
-            event = await session.send_and_wait(prompt, timeout=timeout_seconds)
-            content = ""
-            if event is not None and getattr(event, "data", None) is not None:
-                content = getattr(event.data, "content", "") or ""
-            return _build_model_response(model=request.model, content=content)
+        event = await session.send_and_wait(prompt, timeout=timeout_seconds)
+        content = ""
+        if event is not None and getattr(event, "data", None) is not None:
+            content = getattr(event.data, "content", "") or ""
+        return _build_model_response(model=request.model, content=content)
     finally:
         await session.disconnect()
         await client.stop()
@@ -256,7 +262,31 @@ def _extract_message_text(message: Dict[str, Any]) -> Optional[str]:
 
 
 def _message_list_has_unsupported_content(messages: List[Dict[str, Any]]) -> bool:
-    return any(_extract_message_text(message) is None for message in messages)
+    return any(_message_is_unsupported(message) for message in messages)
+
+
+def _message_is_unsupported(message: Dict[str, Any]) -> bool:
+    role = message.get("role")
+    if role not in _SUPPORTED_MESSAGE_ROLES:
+        return True
+
+    if _extract_message_text(message) is None:
+        return True
+
+    if message.get("tool_calls") is not None:
+        return True
+
+    if message.get("function_call") is not None:
+        return True
+
+    if message.get("name") is not None:
+        return True
+
+    allowed_keys = {"role", "content"}
+    if role == "tool":
+        allowed_keys.add("tool_call_id")
+
+    return any(key not in allowed_keys for key in message)
 
 
 def _get_last_non_system_role(messages: List[Dict[str, Any]]) -> Optional[str]:
@@ -296,6 +326,14 @@ def _normalize_timeout_seconds(timeout: Optional[Any]) -> float:
         return float(timeout)
 
     return 60.0
+
+
+def _has_running_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 def _build_model_response(model: str, content: str) -> ModelResponse:
