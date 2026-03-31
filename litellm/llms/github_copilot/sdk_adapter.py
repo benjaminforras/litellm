@@ -427,7 +427,12 @@ class _GithubCopilotSDKStream:
         return self._iterate_async()
 
     async def _iterate_async(self) -> AsyncIterator[ModelResponseStream]:
-        _CopilotClient, _PermissionHandler, _SubprocessConfig, SessionEventType = self._sdk
+        (
+            _CopilotClient,
+            _PermissionHandler,
+            _SubprocessConfig,
+            SessionEventType,
+        ) = self._sdk
         stream_queue: asyncio.Queue[Any] = asyncio.Queue()
         role_emitted = False
 

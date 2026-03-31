@@ -1365,13 +1365,10 @@ def completion(  # type: ignore # noqa: PLR0915
             ]  # update the model to the actual value if an alias has been passed in
         model_response = ModelResponse()
         setattr(model_response, "usage", litellm.Usage())
-        if (
-            custom_llm_provider == "github_copilot"
-            or (
-                custom_llm_provider is None
-                and isinstance(model, str)
-                and model.startswith("github_copilot/")
-            )
+        if custom_llm_provider == "github_copilot" or (
+            custom_llm_provider is None
+            and isinstance(model, str)
+            and model.startswith("github_copilot/")
         ):
             github_copilot_sdk_request = GithubCopilotSDKChatRequest(
                 model=model,
