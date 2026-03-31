@@ -52,7 +52,8 @@ Keep device flow as the last-resort interactive path, but make environment-token
 1. Add a small token-resolution helper in `litellm/llms/github_copilot/authenticator.py` that checks:
    - `COPILOT_GITHUB_TOKEN`
    - `GH_TOKEN`
-   - `GITHUB_TOKEN`
+
+   `GITHUB_TOKEN` is intentionally **not** part of the legacy-auth precedence chain for this fix, because CI systems such as GitHub Actions inject it automatically and it is often not a Copilot-capable token.
 
 2. Update `get_access_token()` so the resolution order becomes:
    - explicit environment token
@@ -65,6 +66,12 @@ Keep device flow as the last-resort interactive path, but make environment-token
    - environment token present -> no device prompt
    - environment token absent but cached files exist -> reuse cache
    - neither available -> existing device-code flow
+   - invalid environment token -> fail the Copilot API-key refresh normally; do not silently fall back to device flow or cached access-token files
+   - environment tokens are used in-memory only and are **not** persisted to `access_token_file`
+
+5. Leave `get_api_key()` cache semantics unchanged:
+   - valid cached Copilot API-key file remains the first successful non-interactive path
+   - the new env-token precedence applies only when `get_api_key()` needs to refresh via `get_access_token()`
 
 ## Testing
 
@@ -73,7 +80,8 @@ Add focused tests for:
 - environment token is returned by `get_access_token()` without touching device flow
 - cached token file is still used when no environment token exists
 - `get_api_key()` refresh path uses the environment-backed access token
+- existing file/login tests clear `COPILOT_GITHUB_TOKEN` and `GH_TOKEN` so CI environment does not interfere
 
 ## Documentation
 
-Update the GitHub Copilot provider docs to state that legacy fallback paths now also respect `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN` before device-code auth.
+Update the GitHub Copilot provider docs to state that legacy fallback paths now respect `COPILOT_GITHUB_TOKEN` and `GH_TOKEN` before device-code auth.
