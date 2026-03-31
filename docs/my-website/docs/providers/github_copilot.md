@@ -58,6 +58,8 @@ docker run \
 
 The Copilot CLI and SDK respect `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN`. For GitHub personal access tokens, make sure the token has the **Copilot Requests** permission enabled.
 
+LiteLLM's legacy GitHub Copilot fallback path now also checks `COPILOT_GITHUB_TOKEN` and `GH_TOKEN` before triggering interactive device-code authentication, which makes proxy and container deployments non-interactive by default.
+
 ## Usage - LiteLLM Python SDK
 
 ### Chat Completion

@@ -1,6 +1,4 @@
 import json
-import os
-import time
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -8,15 +6,18 @@ import pytest
 
 from litellm.llms.github_copilot.authenticator import Authenticator
 from litellm.llms.github_copilot.common_utils import (
-    APIKeyExpiredError,
     GetAccessTokenError,
-    GetAPIKeyError,
     GetDeviceCodeError,
     RefreshAPIKeyError,
 )
 
 
 class TestGitHubCopilotAuthenticator:
+    @pytest.fixture(autouse=True)
+    def clear_copilot_env_tokens(self, monkeypatch):
+        monkeypatch.delenv("COPILOT_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+
     @pytest.fixture
     def authenticator(self):
         with patch("os.path.exists", return_value=False), patch("os.makedirs") as mock_makedirs:
@@ -67,13 +68,35 @@ class TestGitHubCopilotAuthenticator:
             token = authenticator.get_access_token()
             assert token == mock_token
 
+    def test_get_access_token_from_env(self, authenticator, monkeypatch):
+        """Test retrieving an access token from environment without device flow."""
+        monkeypatch.setenv("COPILOT_GITHUB_TOKEN", "env-access-token")
+
+        with patch("builtins.open", side_effect=AssertionError("should not read token file")), patch.object(
+            authenticator, "_login", side_effect=AssertionError("should not login")
+        ):
+            token = authenticator.get_access_token()
+
+        assert token == "env-access-token"
+
+    def test_get_access_token_prefers_copilot_token_over_gh_token(
+        self, authenticator, monkeypatch
+    ):
+        """Test env precedence between explicit Copilot token vars."""
+        monkeypatch.setenv("COPILOT_GITHUB_TOKEN", "copilot-env-token")
+        monkeypatch.setenv("GH_TOKEN", "gh-env-token")
+
+        token = authenticator.get_access_token()
+
+        assert token == "copilot-env-token"
+
     def test_get_access_token_login(self, authenticator):
         """Test logging in to get an access token."""
         mock_token = "mock-access-token"
         
         with patch.object(authenticator, "_login", return_value=mock_token), \
              patch("builtins.open", mock_open()), \
-             patch("builtins.open", side_effect=IOError) as mock_read:
+             patch("builtins.open", side_effect=IOError):
             token = authenticator.get_access_token()
             assert token == mock_token
             authenticator._login.assert_called_once()
@@ -103,7 +126,7 @@ class TestGitHubCopilotAuthenticator:
         
         with patch("builtins.open", mock_open(read_data=mock_expired_data)), \
              patch.object(authenticator, "_refresh_api_key", return_value=mock_new_data), \
-             patch("json.dump") as mock_json_dump:
+             patch("json.dump"):
             api_key = authenticator.get_api_key()
             assert api_key == "new-api-key"
             authenticator._refresh_api_key.assert_called_once()
@@ -121,6 +144,30 @@ class TestGitHubCopilotAuthenticator:
             assert result == mock_api_key_data
             mock_client.get.assert_called_once()
             authenticator.get_access_token.assert_called_once()
+
+    def test_get_api_key_refresh_uses_env_access_token(
+        self, authenticator, mock_http_client, monkeypatch
+    ):
+        """Test refreshing API key with environment-backed GitHub token."""
+        mock_client, mock_response = mock_http_client
+        mock_api_key_data = {"token": "new-api-key", "expires_at": 12345}
+        monkeypatch.setenv("COPILOT_GITHUB_TOKEN", "env-access-token")
+        mock_file = mock_open()
+
+        def _open_side_effect(file, mode="r", *args, **kwargs):
+            if mode == "r":
+                raise IOError
+            return mock_file(file, mode, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=_open_side_effect), patch(
+            "litellm.llms.github_copilot.authenticator._get_httpx_client",
+            return_value=mock_client,
+        ), patch.object(mock_response, "json", return_value=mock_api_key_data), patch("json.dump"):
+            api_key = authenticator.get_api_key()
+
+        assert api_key == "new-api-key"
+        headers = mock_client.get.call_args.kwargs["headers"]
+        assert headers["authorization"] == "token env-access-token"
 
     def test_refresh_api_key_failure(self, authenticator, mock_http_client):
         """Test failure to refresh an API key."""
